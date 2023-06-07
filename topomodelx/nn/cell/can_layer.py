@@ -1,13 +1,15 @@
 """Cellular Attention Network Layer."""
 import torch
 from torch import nn
+from torch.nn.parameter import Parameter
 
 from topomodelx.base.aggregation import Aggregation
 from topomodelx.base.conv import Conv
 
-#Some notes - The attention function provided for us does not normalize the attention coefficients. Should this be done?
-#Where should we be able to customize the non-linearities? Seems important for the output. What about the attention non-linearities do we just use what is given?
-#I wanted to make this so that without attention it ends up being the Hodge Laplacian network. Maybe ask the contest organizers about this?
+# Some notes - The attention function provided for us does not normalize the attention coefficients. Should this be done?
+# Where should we be able to customize the non-linearities? Seems important for the output. What about the attention non-linearities do we just use what is given?
+# I wanted to make this so that without attention it ends up being the Hodge Laplacian network. Maybe ask the contest organizers about this?
+
 
 class CANLayer(torch.nn.Module):
     """Layer of a Convolutional Cell Complex Network (CCXN).
@@ -41,24 +43,20 @@ class CANLayer(torch.nn.Module):
         Whether to use attention.
     """
 
-    def __init__(self, channels, activation="sigmoid",att = True,eps = 1e-5):
+    def __init__(self, channels, activation="sigmoid", att=True, eps=1e-5):
         super().__init__()
-        #Do I need upper and lower convolution layers? Since I think they will have different parameters
-        self.conv_down = Conv(in_channels=channels, out_channels=channels)
-        self.conv_up = Conv(in_channels = channels, out_channels = channels)
-        #Not sure how the initialization works using nn.linear here if it's consistent with the initialization  that is being used
+        # Do I need upper and lower convolution layers? Since I think they will have different parameters
+        self.conv_down = Conv(in_channels=channels, out_channels=channels, att=att)
+        self.conv_up = Conv(in_channels=channels, out_channels=channels, att=att)
+        # Not sure how the initialization works using nn.linear here if it's consistent with the initialization  that is being used
         self.linear = nn.Linear(channels, channels, bias=False)
         self.aggr = Aggregation(update_func=activation)
         self.eps = eps
         self.att = att
-        
-        #Is this code for attention ok, or should I make a class for this attention layer that subclasses message passing? I ask because I'm not sure if it will be initialized consistent with the initializations already being used, and if we'd have access to reset_parameters/if that's even necessary. What's the point of the reset_parameters?
+
+        # Is this code for attention ok, or should I make a class for this attention layer that subclasses message passing? I ask because I'm not sure if it will be initialized consistent with the initializations already being used, and if we'd have access to reset_parameters/if that's even necessary. What's the point of the reset_parameters?
         if self.att:
-            self.att_weight = Parameter(
-                torch.Tensor(
-                    channels,
-                )
-        
+            self.att_weight = Parameter(torch.Tensor(channels, 1))
 
     def forward(self, x, down_laplacian, up_laplacian):
         r"""Forward pass.
@@ -129,14 +127,14 @@ class CANLayer(torch.nn.Module):
             Output prediction on the entire cell complex.
         """
         # I don't think that the attention mechanism normalizes the attention coefficients should this be fixed? Ask the organizers
-        x_down = self.conv(x, down_laplacian, att = self.att)
-        x_up = self.conv(x, up_laplacian, att = self.att)
-        x_id = (1 + self.eps * int(self.att))self.linear(x)
-        
-        #The tensor diagram says to apply the non-linearities and then sum, whereas the paper sums then applies the non-linearity. I followed the paper here as that seems to make more sense and generalized the rodenberry paper.
-        x = self.aggr(x_down, x_up, x_id, update_func = activation)
-        
-        #More attention coefficients are introduced in the CAN paper. I use ELU for them because the attention mechanism in message-passing uses ELU.
-        if att:
+        x_down = self.conv_down(x, down_laplacian)
+        x_up = self.conv_up(x, up_laplacian)
+        x_id = (1 + self.eps * int(self.att)) * self.linear(x)
+
+        # The tensor diagram says to apply the non-linearities and then sum, whereas the paper sums then applies the non-linearity. I followed the paper here as that seems to make more sense and generalized the rodenberry paper.
+        x = self.aggr([x_down, x_up, x_id])
+
+        # More attention coefficients are introduced in the CAN paper. I use ELU for them because the attention mechanism in message-passing uses ELU.
+        if self.att:
             x = x * torch.nn.functional.elu(torch.mm(x, self.att_weight))
         return x
