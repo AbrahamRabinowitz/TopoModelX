@@ -43,20 +43,56 @@ class CANLayer(torch.nn.Module):
         Whether to use attention.
     """
 
-    def __init__(self, channels, activation="sigmoid", att=True, eps=1e-5):
+    def __init__(
+        self,
+        channels,
+        activation="sigmoid",
+        att=True,
+        eps=1e-5,
+        initialization="xavier_uniform",
+    ):
         super().__init__()
         # Do I need upper and lower convolution layers? Since I think they will have different parameters
-        self.conv_down = Conv(in_channels=channels, out_channels=channels, att=att)
-        self.conv_up = Conv(in_channels=channels, out_channels=channels, att=att)
-        # Not sure how the initialization works using nn.linear here if it's consistent with the initialization  that is being used
+        self.conv_down = Conv(
+            in_channels=channels,
+            out_channels=channels,
+            att=att,
+            initialization=initialization,
+        )
+        self.conv_up = Conv(
+            in_channels=channels,
+            out_channels=channels,
+            att=att,
+            initialization=initialization,
+        )
         self.linear = nn.Linear(channels, channels, bias=False)
         self.aggr = Aggregation(update_func=activation)
         self.eps = eps
         self.att = att
-
+        self.initialization = initialization
         # Is this code for attention ok, or should I make a class for this attention layer that subclasses message passing? I ask because I'm not sure if it will be initialized consistent with the initializations already being used, and if we'd have access to reset_parameters/if that's even necessary. What's the point of the reset_parameters?
         if self.att:
             self.att_weight = Parameter(torch.Tensor(channels, 1))
+        self.reset_parameters()
+
+    def reset_parameters(self, gain=1.414):
+        """Reset parameters."""
+        self.conv_down.reset_parameters(gain=gain)
+        self.conv_up.reset_parameters(gain=gain)
+        if self.initialization == "xavier_uniform":
+            torch.nn.init.xavier_uniform_(self.linear.weight, gain=gain)
+            if self.att:
+                torch.nn.init.xavier_uniform_(self.att_weight.view(-1, 1), gain=gain)
+
+        elif self.initialization == "xavier_normal":
+            torch.nn.init.xavier_normal_(self.linear.weight, gain=gain)
+            if self.att:
+                torch.nn.init.xavier_normal_(self.att_weight.view(-1, 1), gain=gain)
+        else:
+            raise RuntimeError(
+                "Initialization method not recognized. "
+                "Should be either xavier_uniform or xavier_normal."
+            )
 
     def forward(self, x, down_laplacian, up_laplacian):
         r"""Forward pass.
